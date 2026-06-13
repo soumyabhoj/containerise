@@ -112,11 +112,12 @@ jobs:
           Write-Host "Image: $IMAGE"
           "IMAGE=$IMAGE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      # Apply namespace, configmap, and infrastructure manifests
-      # (Secret is applied manually once — never committed with real values)
+      # Apply namespace, sealed secret, configmap, and infrastructure manifests
+      # SealedSecret is safe to commit — encrypted by the cluster's public key
       - name: Apply base manifests
         run: |
           kubectl apply -f k8s/00-namespace.yaml
+          kubectl apply -f k8s/01-sealed-secret.yaml
           kubectl apply -f k8s/02-configmap.yaml
           kubectl apply -f k8s/03-postgres-pvc.yaml
           kubectl apply -f k8s/04-postgres-deployment.yaml
