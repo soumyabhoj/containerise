@@ -99,10 +99,13 @@ jobs:
 
       # Decode kubeconfig from GitHub secret and configure kubectl
       - name: Configure kubectl
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          echo "$KUBECONFIG_DATA" | tr -d '\r\n ' | base64 --decode --ignore-garbage > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
+          kubectl cluster-info
 
       # Derive the exact SHA-tagged image that was just pushed
       - name: Set image tag
