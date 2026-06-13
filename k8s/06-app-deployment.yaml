@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskmanager
+  namespace: taskmanager
+  labels:
+    app: taskmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: taskmanager
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: taskmanager
+    spec:
+      containers:
+        - name: taskmanager
+          # IMAGE is replaced by the CI/CD pipeline at deploy time
+          image: ghcr.io/GITHUB_USER/taskmanager:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            # Compose the JDBC URL from ConfigMap (non-secret) values
+            - name: DB_URL
+              value: "jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: taskmanager-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: taskmanager-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: taskmanager-config
+                  key: DB_NAME
+            # Credentials come from Kubernetes Secret
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: taskmanager-config
+                  key: SPRING_PROFILES_ACTIVE
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3

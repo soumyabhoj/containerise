@@ -1,0 +1,146 @@
+name: CI/CD — Build, Push & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/taskmanager
+
+jobs:
+  # ── 1. Build & Test ──────────────────────────────────────────────────────────
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+
+      - name: Build and run tests
+        run: mvn -B verify
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: target/surefire-reports/
+
+  # ── 2. Build & Push Docker image ─────────────────────────────────────────────
+  docker-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    needs: build-test
+    # Only push on pushes to main, not on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build-push.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── 3. Deploy to Kubernetes ──────────────────────────────────────────────────
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: docker-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Write the kubeconfig from the GitHub secret so kubectl can connect
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      # Derive the exact SHA-tagged image that was just pushed
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      # Apply namespace, secrets, configmap, and infrastructure manifests
+      # (Secrets are managed separately — do NOT store plaintext secrets in git.
+      #  Apply them manually once, or use Sealed Secrets / External Secrets Operator.)
+      - name: Apply base manifests
+        run: |
+          kubectl apply -f k8s/00-namespace.yaml
+          kubectl apply -f k8s/02-configmap.yaml
+          kubectl apply -f k8s/03-postgres-pvc.yaml
+          kubectl apply -f k8s/04-postgres-deployment.yaml
+          kubectl apply -f k8s/05-postgres-service.yaml
+
+      # Wait for Postgres to be healthy before rolling out the app
+      - name: Wait for Postgres rollout
+        run: kubectl rollout status deployment/postgres -n taskmanager --timeout=120s
+
+      # Patch the app deployment with the exact image built in this run
+      - name: Deploy application
+        run: |
+          kubectl apply -f k8s/06-app-deployment.yaml
+          kubectl apply -f k8s/07-app-service.yaml
+          kubectl set image deployment/taskmanager \
+            taskmanager=${{ steps.tag.outputs.IMAGE }} \
+            -n taskmanager
+
+      - name: Wait for app rollout
+        run: kubectl rollout status deployment/taskmanager -n taskmanager --timeout=180s
+
+      - name: Print deployment status
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n taskmanager
+          echo "=== Services ==="
+          kubectl get svc -n taskmanager

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: taskmanager-service
+  namespace: taskmanager
+spec:
+  selector:
+    app: taskmanager
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  # Change to LoadBalancer if your cluster supports it,
+  # or use an Ingress controller for production traffic.
+  type: ClusterIP
+---
+# Optional: expose via NodePort for quick local testing (e.g. minikube)
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: taskmanager-nodeport
+#   namespace: taskmanager
+# spec:
+#   selector:
+#     app: taskmanager
+#   type: NodePort
+#   ports:
+#     - port: 80
+#       targetPort: 8080
+#       nodePort: 30080
