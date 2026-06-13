@@ -92,6 +92,9 @@ jobs:
     needs: docker-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout
