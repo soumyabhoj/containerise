@@ -85,35 +85,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 3. Deploy to Kubernetes ──────────────────────────────────────────────────
+  # ── 3. Deploy to AKS ─────────────────────────────────────────────────────────
   deploy:
     name: Deploy to Kubernetes
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: docker-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
-    defaults:
-      run:
-        shell: powershell
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Self-hosted runner on the same machine as minikube — kubeconfig already present.
-      # For a cloud cluster, replace with: base64-decode secrets.KUBECONFIG into ~/.kube/config
+      # Decode kubeconfig from GitHub secret and configure kubectl
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       # Derive the exact SHA-tagged image that was just pushed
       - name: Set image tag
         id: tag
         run: |
-          $SHORT_SHA = "${{ github.sha }}".Substring(0, 7)
-          $IMAGE = "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$SHORT_SHA"
-          Write-Host "Image: $IMAGE"
-          "IMAGE=$IMAGE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       # Apply namespace, sealed secret, configmap, and infrastructure manifests
-      # SealedSecret is safe to commit — encrypted by the cluster's public key
+      # SealedSecret is safe to commit — encrypted by the AKS cluster's public key
       - name: Apply base manifests
         run: |
           kubectl apply -f k8s/00-namespace.yaml
@@ -132,14 +131,16 @@ jobs:
         run: |
           kubectl apply -f k8s/06-app-deployment.yaml
           kubectl apply -f k8s/07-app-service.yaml
-          kubectl set image deployment/taskmanager taskmanager=${{ steps.tag.outputs.IMAGE }} -n taskmanager
+          kubectl set image deployment/taskmanager \
+            taskmanager=${{ steps.tag.outputs.IMAGE }} \
+            -n taskmanager
 
       - name: Wait for app rollout
         run: kubectl rollout status deployment/taskmanager -n taskmanager --timeout=180s
 
       - name: Print deployment status
         run: |
-          Write-Host "=== Pods ==="
+          echo "=== Pods ==="
           kubectl get pods -n taskmanager
-          Write-Host "=== Services ==="
+          echo "=== Services ==="
           kubectl get svc -n taskmanager
