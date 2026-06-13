@@ -28,9 +28,7 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            # Compose the JDBC URL from ConfigMap (non-secret) values
-            - name: DB_URL
-              value: "jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            # Define individual vars first so $(VAR) substitution works in DB_URL
             - name: DB_HOST
               valueFrom:
                 configMapKeyRef:
@@ -46,6 +44,9 @@ spec:
                 configMapKeyRef:
                   name: taskmanager-config
                   key: DB_NAME
+            # Compose JDBC URL from the vars defined above
+            - name: DB_URL
+              value: "jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
             # Credentials come from Kubernetes Secret
             - name: DB_USERNAME
               valueFrom:
