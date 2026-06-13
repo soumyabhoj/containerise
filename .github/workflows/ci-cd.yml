@@ -94,7 +94,7 @@ jobs:
     environment: production
     defaults:
       run:
-        shell: pwsh
+        shell: powershell
 
     steps:
       - name: Checkout
