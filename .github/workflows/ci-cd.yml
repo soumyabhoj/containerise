@@ -94,7 +94,7 @@ jobs:
     environment: production
     defaults:
       run:
-        shell: bash
+        shell: pwsh
 
     steps:
       - name: Checkout
@@ -107,12 +107,13 @@ jobs:
       - name: Set image tag
         id: tag
         run: |
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          $SHORT_SHA = "${{ github.sha }}".Substring(0, 7)
+          $IMAGE = "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$SHORT_SHA"
+          Write-Host "Image: $IMAGE"
+          "IMAGE=$IMAGE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      # Apply namespace, secrets, configmap, and infrastructure manifests
-      # (Secrets are managed separately — do NOT store plaintext secrets in git.
-      #  Apply them manually once, or use Sealed Secrets / External Secrets Operator.)
+      # Apply namespace, configmap, and infrastructure manifests
+      # (Secret is applied manually once — never committed with real values)
       - name: Apply base manifests
         run: |
           kubectl apply -f k8s/00-namespace.yaml
@@ -130,16 +131,14 @@ jobs:
         run: |
           kubectl apply -f k8s/06-app-deployment.yaml
           kubectl apply -f k8s/07-app-service.yaml
-          kubectl set image deployment/taskmanager \
-            taskmanager=${{ steps.tag.outputs.IMAGE }} \
-            -n taskmanager
+          kubectl set image deployment/taskmanager taskmanager=${{ steps.tag.outputs.IMAGE }} -n taskmanager
 
       - name: Wait for app rollout
         run: kubectl rollout status deployment/taskmanager -n taskmanager --timeout=180s
 
       - name: Print deployment status
         run: |
-          echo "=== Pods ==="
+          Write-Host "=== Pods ==="
           kubectl get pods -n taskmanager
-          echo "=== Services ==="
+          Write-Host "=== Services ==="
           kubectl get svc -n taskmanager
